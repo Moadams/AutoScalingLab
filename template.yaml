@@ -1,0 +1,304 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Deploys an auto-scaling Apache web server with a public-facing Application Load Balancer
+  and a scaling policy based on CPU utilization.
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for the VPC.
+  PublicSubnetCidr:
+    Type: String
+    Default: 10.0.1.0/24
+    Description: CIDR block for the public subnet.
+  PrivateSubnetCidr:
+    Type: String
+    Default: 10.0.2.0/24
+    Description: CIDR block for the private subnet.
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type for the web servers.
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+    Description: Latest AMI ID for Amazon Linux 2.
+
+Resources:
+  # ----------------------------------------------------------------- #
+  # Networking Stack                                                  #
+  # ----------------------------------------------------------------- #
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: AutoScalingVPC
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnetCidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: PublicSubnet
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnetCidr
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: NATGateway
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ----------------------------------------------------------------- #
+  # Security Groups                                                   #
+  # ----------------------------------------------------------------- #
+  WebserverSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: WebserverSG
+      GroupDescription: Enable HTTP access from the load balancer.
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !GetAtt ALBHostSecurityGroup.GroupId
+
+  ALBHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: ALBHostSG
+      GroupDescription: Enable HTTP access to the ALB.
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # ----------------------------------------------------------------- #
+  # Load Balancer                                                     #
+  # ----------------------------------------------------------------- #
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet
+      SecurityGroups:
+        - !GetAtt ALBHostSecurityGroup.GroupId
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VPC
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+
+  # ----------------------------------------------------------------- #
+  # Auto Scaling Group                                                #
+  # ----------------------------------------------------------------- #
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-LaunchTemplate"
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: !Ref InstanceType
+        SecurityGroupIds:
+          - !GetAtt WebserverSecurityGroup.GroupId
+        UserData:
+          Fn::Base64: |
+            #!/bin/bash -xe
+            # Install Apache HTTP Server and PHP
+            yum update -y
+            yum install -y httpd php stress
+            
+            # Start and enable Apache
+            systemctl start httpd
+            systemctl enable httpd
+            
+            # Get Instance Metadata
+            INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+            PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+            
+            # Create the main web page with a stress test button
+            echo "
+            <!DOCTYPE html>
+            <html lang='en'>
+            <head>
+              <meta charset='UTF-8'>
+              <title>Auto-Scaling Demo</title>
+              <style>
+                body { font-family: sans-serif; text-align: center; margin-top: 50px; background-color: #f0f4f8; }
+                .container { max-width: 600px; margin: auto; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); background-color: white; }
+                h1 { color: #333; }
+                p { color: #555; }
+                button {
+                  background-color: #4CAF50;
+                  color: white;
+                  padding: 15px 32px;
+                  text-align: center;
+                  text-decoration: none;
+                  display: inline-block;
+                  font-size: 16px;
+                  margin: 4px 2px;
+                  cursor: pointer;
+                  border: none;
+                  border-radius: 4px;
+                  transition: background-color 0.3s;
+                }
+                button:hover {
+                  background-color: #45a049;
+                }
+              </style>
+            </head>
+            <body>
+              <div class='container'>
+                <h1>Auto-Scaling Demonstration</h1>
+                <p>Hello from **IP Address:** ${PRIVATE_IP} / **Instance ID:** ${INSTANCE_ID}</p>
+                <p>This page is served from an EC2 instance within an auto-scaling group. Click the button to trigger a CPU stress test.</p>
+                <button onclick='stressCPU()'>Stress Test CPU</button>
+              </div>
+              <script>
+                function stressCPU() {
+                  document.getElementById('message').innerText = 'Starting stress test...';
+                  fetch('/stress.php')
+                    .then(response => response.text())
+                    .then(data => {
+                      alert('Stress test started!');
+                    })
+                    .catch(error => console.error('Error during stress test:', error));
+                }
+              </script>
+            </body>
+            </html>" > /var/www/html/index.html
+            
+            # Create a PHP script for the stress test
+            echo "
+            <?php
+            // This script will max out the CPU for a short period
+            \$x = 0.0001;
+            for (\$i = 0; \$i <= 1000000; \$i++) {
+                \$x += sqrt(\$x);
+            }
+            echo 'CPU stressed!';
+            ?>" > /var/www/html/stress.php
+            
+            # Make sure Apache owns the files
+            chown -R apache:apache /var/www/html
+            
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet
+      DesiredCapacity: 1
+      MinSize: 1
+      MaxSize: 4
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.DefaultVersionNumber
+
+  ScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGCPUUtilization
+        TargetValue: 30
+
+Outputs:
+  LoadBalancerURL:
+    Description: The URL for the Application Load Balancer
+    Value: !GetAtt ALB.DNSName
+    Export:
+      Name: !Sub "${AWS::StackName}-LoadBalancerURL"
