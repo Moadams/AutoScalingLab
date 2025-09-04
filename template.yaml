@@ -408,7 +408,7 @@ Resources:
   ScaleOutPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
-      AutoScalingGroupName: !Ref AutoScalingGroup
+      AutoScalingGroupName: !Ref MyAutoScalingGroup
       PolicyType: SimpleScaling
       AdjustmentType: ChangeInCapacity
       ScalingAdjustment: 1
@@ -422,7 +422,7 @@ Resources:
       MetricName: CPUUtilization
       Dimensions:
         - Name: AutoScalingGroupName
-          Value: !Ref AutoScalingGroup
+          Value: !Ref MyAutoScalingGroup
       Statistic: Average
       Period: 60
       EvaluationPeriods: 2
@@ -434,7 +434,7 @@ Resources:
   ScaleInPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
-      AutoScalingGroupName: !Ref AutoScalingGroup
+      AutoScalingGroupName: !Ref MyAutoScalingGroup
       PolicyType: SimpleScaling
       AdjustmentType: ChangeInCapacity
       ScalingAdjustment: -1   
@@ -448,7 +448,7 @@ Resources:
       MetricName: CPUUtilization
       Dimensions:
         - Name: AutoScalingGroupName
-          Value: !Ref AutoScalingGroup
+          Value: !Ref MyAutoScalingGroup
       Statistic: Average
       Period: 60
       EvaluationPeriods: 2
