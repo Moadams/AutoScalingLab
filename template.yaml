@@ -338,18 +338,26 @@ Resources:
                 }
               </style>
             <body>
-              <h1>Hello from $META_IP / $META_ID</h1>
-              <button id="stressBtn">Start CPU Stress</button>
-              <button id="stopBtn">Stop CPU Stress</button>
+              <div class='container'>
+                <h1>Auto-Scaling Demonstration</h1>
+                <p>Hello from $META_IP / $META_ID</p>
+                <p>This page is served from an EC2 instance within an auto-scaling group. Click the button to trigger a CPU stress test.</p>
+                <button id="stressBtn">Start CPU Stressing</button>
+                <button id="stopBtn">Stop CPU Stressing</button
+              </div>
               <div id="result"></div>
+              
               <script>
                 document.getElementById('stressBtn').addEventListener('click', function() {
+                document.getElementById('result').innerText = "Starting CPU stress...";
+
                   fetch('/cgi-bin/stress.sh')
                     .then(r => r.text())
                     .then(t => { document.getElementById('result').innerHTML = '<pre>' + t + '</pre>'; })
                     .catch(e => { document.getElementById('result').innerText = 'Error: ' + e; });
                 });
                 document.getElementById('stopBtn').addEventListener('click', function() {
+                document.getElementById('result').innerText = "Stopping CPU stress...";
                   fetch('/cgi-bin/stop-stress.sh')
                     .then(r => r.text())
                     .then(t => { document.getElementById('result').innerHTML = '<pre>' + t + '</pre>'; })
@@ -396,17 +404,58 @@ Resources:
           Value: AutoScalingInstance
           PropagateAtLaunch: true
 
-  # Scaling policy with target tracking
-  CpuTargetTrackingPolicy:
+  
+  ScaleOutPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
-      AutoScalingGroupName: !Ref MyAutoScalingGroup
-      PolicyType: TargetTrackingScaling
-      TargetTrackingConfiguration:
-        PredefinedMetricSpecification:
-          PredefinedMetricType: ASGAverageCPUUtilization
-        TargetValue: 30.0
-        DisableScaleIn: false
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: SimpleScaling
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: 1
+      Cooldown: 60
+
+  CPUUtilizationTooHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Alarm if CPU utilization exceeds 30%"
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 30
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref ScaleOutPolicy
+
+  ScaleInPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: SimpleScaling
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: -1   
+      Cooldown: 60
+
+  CPUUtilizationTooLow:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Alarm if CPU utilization drops below 30%"
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 30
+      ComparisonOperator: LessThanThreshold
+      AlarmActions:
+        - !Ref ScaleInPolicy
 
 Outputs:
   LoadBalancer:
