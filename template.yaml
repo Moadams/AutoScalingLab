@@ -349,12 +349,15 @@ Resources:
               
               <script>
                 document.getElementById('stressBtn').addEventListener('click', function() {
+                document.getElementById('result').innerText = "Starting CPU stress...";
+
                   fetch('/cgi-bin/stress.sh')
                     .then(r => r.text())
                     .then(t => { document.getElementById('result').innerHTML = '<pre>' + t + '</pre>'; })
                     .catch(e => { document.getElementById('result').innerText = 'Error: ' + e; });
                 });
                 document.getElementById('stopBtn').addEventListener('click', function() {
+                document.getElementById('result').innerText = "Stopping CPU stress...";
                   fetch('/cgi-bin/stop-stress.sh')
                     .then(r => r.text())
                     .then(t => { document.getElementById('result').innerHTML = '<pre>' + t + '</pre>'; })
