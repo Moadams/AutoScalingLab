@@ -28,8 +28,7 @@ Parameters:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
 
-Mappings: {}
- 
+
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -140,6 +139,7 @@ Resources:
         - Key: Name
           Value: NATGateway1
 
+
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -161,11 +161,40 @@ Resources:
       SubnetId: !Ref PrivateSubnet1
       RouteTableId: !Ref PrivateRouteTable
 
+  NatGatewayEIP2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP2.AllocationId
+      SubnetId: !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: NATGateway2
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable2
+
+  PrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
   PrivateSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PrivateSubnet2
-      RouteTableId: !Ref PrivateRouteTable
+      RouteTableId: !Ref PrivateRouteTable2
 
   # Security Groups
   AlbSecurityGroup:
@@ -292,7 +321,7 @@ Resources:
             # Start two background CPU burners using yes
             nohup bash -c 'yes > /dev/null &' >/dev/null 2>&1
             nohup bash -c 'yes > /dev/null &' >/dev/null 2>&1
-            echo -e "Content-type: text/html\n\n<html><body><h2>CPU stress started on this instance</h2></body></html>"
+            echo -e "Content-type: text/html\n\n<html><body><h2>Stress has started on this instance</h2></body></html>"
             EOF
             chmod +x /var/www/cgi-bin/stress.sh
 
@@ -301,7 +330,7 @@ Resources:
             #!/bin/bash
             # Kill all yes processes
             sudo pkill -f "^yes"
-            echo -e "Content-type: text/html\n\n<html><body><h2>CPU stress stopped on this instance</h2></body></html>"
+            echo -e "Content-type: text/html\n\n<html><body><h2>Stress has stopped on this instance</h2></body></html>"
             EOF
             chmod +x /var/www/cgi-bin/stop-stress.sh
 
